@@ -6,9 +6,9 @@ alpha = 10.0
 
 P = 40
 Q = 40
-N = 30
+N = 300
 tol = 1e-8
-maxits = 0
+maxits = 8
 
 centre = (2, 2)
 radius = 0.2

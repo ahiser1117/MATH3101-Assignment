@@ -1,8 +1,10 @@
 import numpy as np
+from scipy.sparse.linalg import spsolve
 from dataclasses import dataclass
-from scipy.sparse import spdiags, kron
+from scipy.sparse import spdiags, kron, eye
+from scipy import sparse
 from q7_params import *
-
+import time
 
 @dataclass
 class grid:
@@ -50,18 +52,13 @@ def Fisher(V, alpha):
 
 
 def F(u, alpha):
-    f = np.empty((u.size))
-    for i in range(u.size):
-        f[i] = alpha * u[i] * (1 - u[i])
-    return f
+    return alpha * (u - np.multiply(u, u))
 
 def dF(u, alpha):
-    df = np.empty((u.size))
-    for i in range(u.size):
-        df[i] = alpha * (1 - 2 * u[i])
-    return df
+    return np.diag(alpha * (1 - 2 * u))
 
 def implicit_Euler(gr, kappa, alpha, reaction, u0mat, tol, maxits):
+    # Read in arguments from grid points
     x = gr.x
     y = gr.y
     t = gr.t
@@ -70,30 +67,48 @@ def implicit_Euler(gr, kappa, alpha, reaction, u0mat, tol, maxits):
     N = t.size-1
     dt = gr.dt
 
+    # Allocate memory and read in initial values
     U = np.empty((N+1, P+1, Q+1))
+    iterations = np.zeros((N+1))
     A = Poisson_matrix(gr, kappa)
-    U[0, :, :] = u0mat[:, :]
-    V = U[0,:,:]
     M = (P + 1) * (Q + 1)
-
+    U[0, :, :] = u0mat[:, :]
+    
+    # 0th iteration steps
+    fV, dfV = reaction(U[0,:,:].reshape(M), alpha)
+    V = u0mat[:, :].reshape(M)
     for n in range(1, N+1):
-        print(n)
-        fV, dfV = reaction(V.reshape((M,1)), alpha)
-        # print(fV)
-        # print(f"fV: {fV.shape}, V: {V.reshape(M).shape}, A: {A.shape}, M: {M}")
-        V = (V.reshape(M) + dt * fV) * np.linalg.inv(np.identity(M) + dt * A)
-        # print(f"fV: {fV.shape}, V: {V.reshape(M).shape}, A: {A.shape}, M: {M}")
-        U[n, :, :] = V.reshape(P+1,Q+1)
-        # print(V.max())
+        # Equation (9) to solve for V
+        V = spsolve(eye(M) + dt * A, V + dt * fV)
+        
+        # fV and dfV values for following step
+        fV, dfV = reaction(V, alpha)
+        
+        dVmax = tol + 1
+        j = 0
+        while(j < maxits and dVmax > tol):
+            # Calculate LHS and RHS of equation (10)        
+            a = (eye(M) + dt * A - dt * dfV)
+            b = (U[n-1,:,:].reshape(M) + dt * fV - (eye(M) + dt * A) @ V)
+            
+            # Solve for dV
+            dV = spsolve(a, b)
+            V = V + dV
+            
+            dVmax = np.abs(dV.max())
+            j += 1
+            fV, dfV = reaction(V, alpha)
 
-    return U
+        iterations[n] = j
+        
+        # Copy in calculated values to output matrix
+        U[n, :, :] = V.reshape(P+1,Q+1)
+
+    return U, iterations
 
 def u0(x, y, H, C, R):
-    u0 = np.empty((x.size, y.size))
-    for i in range(x.size):
-        for j in range(y.size):
-            u0[i, j] = H * np.exp(-((x[i] - C[0])**2 + (y[j] - C[1])**2)/R**2)
-    return u0
+    x, y = np.meshgrid(x, y)
+    return H * np.exp(-((x - C[0])**2 + (y - C[1])**2)/R**2)
 
 
 
